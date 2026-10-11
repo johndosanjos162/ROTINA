@@ -2,10 +2,9 @@ name: Manter o app ativo
 
 on:
   schedule:
-    # A cada 1 hora, no minuto 17
-    # (evita o minuto 0, que é o horário de pico do GitHub Actions)
+    # A cada 1 hora, no minuto 17 (evita o pico do minuto 0)
     - cron: '17 * * * *'
-  workflow_dispatch:   # permite rodar manualmente
+  workflow_dispatch:   # permite rodar manualmente pelo painel
 
 jobs:
   ping:
@@ -13,13 +12,33 @@ jobs:
     steps:
       - name: Pingar o app Streamlit
         run: |
-          URL="https://SEU-APP.streamlit.app"
+          # ⚠️ TROQUE pela URL real do SEU app
+          URL="https://rotina-yiwfg2exsxkes8akbsqjqx.streamlit.app"
+
           echo "Pingando $URL em $(date -u)"
+
+          # -L segue redirecionamentos
+          # --max-time 30 evita travar se não responder
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                   --max-time 30 "$URL")
-          echo "HTTP status: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "⚠️ App pode estar dormindo ou fora do ar."
-            exit 1
-          fi
-          echo "✅ App respondeu 200 OK."
+                   -L --max-time 30 "$URL")
+
+          echo "HTTP status final: $STATUS"
+
+          # Streamlit Cloud responde 200 ou 303 (redirect).
+          # Ambos indicam que o app está acordado.
+          case "$STATUS" in
+            200|301|302|303|307|308)
+              echo "✅ App está ativo (status $STATUS)."
+              ;;
+            000)
+              echo "❌ Sem resposta (timeout ou DNS)."
+              exit 1
+              ;;
+            5*)
+              echo "❌ Erro no servidor do Streamlit ($STATUS)."
+              exit 1
+              ;;
+            *)
+              echo "⚠️ Status inesperado: $STATUS (considerado OK)."
+              ;;
+          esac
