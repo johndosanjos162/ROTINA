@@ -1,5 +1,8 @@
 # app.py
+# ============================================================
 # Interface principal do aplicativo Streamlit.
+# Sistema de Escala 12x36 + Alarme de Estudo Inteligente
+# ============================================================
 
 import streamlit as st
 from datetime import date, datetime, timedelta
@@ -148,7 +151,7 @@ with aba1:
         dias = esc.gerar_dias_escala(data_ini, 30)
 
         # Monta grid de 7 colunas
-        semanas = [dias[i:i+7] for i in range(0, len(dias), 7)]
+        semanas = [dias[i:i + 7] for i in range(0, len(dias), 7)]
         for semana in semanas:
             cols = st.columns(7)
             for i, dia_info in enumerate(semana):
@@ -230,7 +233,7 @@ with aba2:
     else:
         # Exibe tabela editável resumida
         df_exibir = df[["id", "data", "descricao", "categoria",
-                         "duracao_min", "concluida"]].copy()
+                        "duracao_min", "concluida"]].copy()
         df_exibir["data"] = df_exibir["data"].dt.strftime("%d/%m/%Y")
         st.dataframe(df_exibir, use_container_width=True, hide_index=True)
 
@@ -367,11 +370,42 @@ with aba4:
                 f"**{st.session_state.horario_alarme}**"
             )
 
+        # ============================================================
+        #  🔍 DIAGNÓSTICO DO SISTEMA (bloco novo adicionado)
+        # ============================================================
+        st.divider()
+        st.subheader("🔍 Diagnóstico do Sistema")
+
+        deps = alm.verificar_dependencias_sistema()
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.metric(
+                "espeak (voz)",
+                "✅ OK" if deps["espeak"] else "❌ ausente",
+                help=deps["espeak_path"],
+            )
+        with col_d2:
+            st.metric(
+                "ffplay (som)",
+                "✅ OK" if deps["ffplay"] else "❌ ausente",
+                help=deps["ffplay_path"],
+            )
+        if not (deps["espeak"] and deps["ffplay"]):
+            st.error(
+                "Binários ausentes. Verifique se `packages.txt` contém "
+                "`espeak`, `libespeak1` e `ffmpeg`, e faça reboot do app."
+            )
+        else:
+            st.success(
+                "✅ Todos os binários de áudio estão disponíveis. "
+                "O alarme funcionará corretamente."
+            )
+
 # ============================================================
 #  Footer
 # ============================================================
 st.divider()
 st.caption(
-    "Desenvolvido com Streamlit + Supabase + Pandas + pygame + pyttsx3. "
+    "Desenvolvido com Streamlit + Supabase + Pandas + ffmpeg + espeak. "
     "Pronto para migração para PostgreSQL local."
 )
