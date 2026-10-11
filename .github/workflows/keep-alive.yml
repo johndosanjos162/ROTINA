@@ -1,0 +1,25 @@
+name: Manter o app ativo
+
+on:
+  schedule:
+    # A cada 1 hora, no minuto 17
+    # (evita o minuto 0, que é o horário de pico do GitHub Actions)
+    - cron: '17 * * * *'
+  workflow_dispatch:   # permite rodar manualmente
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pingar o app Streamlit
+        run: |
+          URL="https://SEU-APP.streamlit.app"
+          echo "Pingando $URL em $(date -u)"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                   --max-time 30 "$URL")
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "⚠️ App pode estar dormindo ou fora do ar."
+            exit 1
+          fi
+          echo "✅ App respondeu 200 OK."
