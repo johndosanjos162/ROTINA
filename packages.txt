@@ -1,5 +1,3 @@
 espeak
-libespeak-dev
+libespeak1
 ffmpeg
-libsdl2-mixer-2.0-0
-libsdl2-2.0-0
