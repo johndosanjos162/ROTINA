@@ -13,7 +13,7 @@ jobs:
       - name: Pingar o app Streamlit
         run: |
           # ⚠️ TROQUE pela URL real do SEU app
-          URL="https://rotina-yiwfg2exsxkes8akbsqjqx.streamlit.app"
+          URL="https://rotina-yiwfg2exsxkes8akbsqjqx.streamlit.app/"
 
           echo "Pingando $URL em $(date -u)"
 
