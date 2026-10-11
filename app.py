@@ -1,11 +1,7 @@
 # app.py
 # ============================================================
 # Interface principal do aplicativo Streamlit.
-# Sistema de Escala 12x36 + Alarme de Estudo Inteligente
-#
-# Integração: Supabase (nuvem) + ffmpeg/espeak (áudio)
-# Todas as chamadas ao banco estão protegidas por try/except
-# para exibir mensagens de erro úteis em vez do erro genérico.
+# Escala 12x36 (trabalho/folga alternados) + Alarme de Estudo
 # ============================================================
 
 import streamlit as st
@@ -71,11 +67,14 @@ with st.sidebar:
 
     # ---------- Configuração da Escala ----------
     st.subheader("📅 Escala 12x36")
+    st.caption(
+        "Informe a data em que você **começou um turno de trabalho** "
+        "(ex: hoje, se hoje é dia de trabalho). A escala vai alternar "
+        "automaticamente: trabalho → folga → trabalho → folga..."
+    )
     data_inicio = st.date_input(
         "Data do primeiro dia de trabalho",
         value=st.session_state.data_inicio_escala or date.today(),
-        help="Escolha a data em que você começa um turno de 12h. "
-             "A escala segue: trabalho → folga → rotina em casa.",
     )
     if st.button("💾 Salvar escala"):
         try:
@@ -87,8 +86,7 @@ with st.sidebar:
             st.error(f"❌ Erro ao salvar escala: {e}")
             st.info(
                 "Verifique se as tabelas foram criadas no Supabase "
-                "e se o RLS está desabilitado (ou se há policies "
-                "permitindo acesso). Veja o SQL no README."
+                "e se o RLS está desabilitado."
             )
 
     st.divider()
@@ -138,7 +136,7 @@ if (st.session_state.data_inicio_escala
 #  Conteúdo principal
 # ============================================================
 st.title("📅 Gerenciador de Escala 12x36 + Estudos")
-st.caption("Trabalho, folga, rotina em casa e alarme inteligente de estudo.")
+st.caption("Trabalho, folga e alarme inteligente de estudo.")
 
 aba1, aba2, aba3, aba4 = st.tabs([
     "🗓️ Minha Escala",
@@ -159,40 +157,72 @@ with aba1:
 
         # --- Status do dia ---
         tipo_hoje = esc.classificar_dia(hoje, data_ini)
+
         col1, col2, col3 = st.columns(3)
 
         icones = {
-            "trabalho": "🔴 Trabalho (12h)",
-            "folga": "🟢 Folga",
-            "rotina_casa": "🏠 Rotina em Casa",
+            "trabalho": "🔴 Trabalho (6h → 18h)",
+            "folga": "🟢 Folga (36h de descanso)",
         }
         col1.metric("Hoje", icones[tipo_hoje])
+
         proximas = esc.proximos_dias_folga(data_ini, hoje, 3)
         if proximas:
             col2.metric("Próxima folga", proximas[0].strftime("%d/%m/%Y"))
-        else:
-            col2.metric("Próxima folga", "—")
+            if len(proximas) > 1:
+                col3.metric(
+                    "Folga seguinte", proximas[1].strftime("%d/%m/%Y")
+                )
 
         # --- Calendário visual (próximos 30 dias) ---
         st.subheader("Próximos 30 dias")
+        st.caption(
+            "🔴 Trabalho &nbsp;•&nbsp; 🟢 Folga "
+            "— padrão: trabalho um dia, folga no outro."
+        )
         dias = esc.gerar_dias_escala(data_ini, 30)
 
-        # Monta grid de 7 colunas
-        semanas = [dias[i:i + 7] for i in range(0, len(dias), 7)]
+        # Cabeçalho dos dias da semana
+        dias_semana = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+        cols_header = st.columns(7)
+        for i, nome in enumerate(dias_semana):
+            cols_header[i].markdown(
+                f"<div style='text-align:center; font-weight:bold; "
+                f"font-size:12px; color:gray;'>{nome}</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Ajusta o primeiro dia da semana para alinhar com o dia da semana real
+        primeiro = dias[0]["data"]
+        offset = primeiro.weekday()  # 0=segunda, 6=domingo
+
+        # Preenche células vazias antes do primeiro dia
+        celulas = [None] * offset + dias[: 30 - offset]
+
+        # Divide em semanas de 7
+        semanas = [celulas[i:i + 7] for i in range(0, len(celulas), 7)]
+
         for semana in semanas:
             cols = st.columns(7)
             for i, dia_info in enumerate(semana):
-                d = dia_info["data"]
-                t = dia_info["tipo"]
                 with cols[i]:
+                    if dia_info is None:
+                        st.markdown("&nbsp;", unsafe_allow_html=True)
+                        continue
+                    d = dia_info["data"]
+                    t = dia_info["tipo"]
+                    # Destaca o dia de hoje com borda
+                    borda = (
+                        "3px solid #1E88E5"
+                        if d == hoje else "1px solid #ddd"
+                    )
                     if t == "trabalho":
                         bg, label = "#FF4B4B", "🔴"
-                    elif t == "folga":
-                        bg, label = "#00CC96", "🟢"
                     else:
-                        bg, label = "#FFA500", "🏠"
+                        bg, label = "#00CC96", "🟢"
                     st.markdown(
-                        f"""<div style="background:{bg}; padding:6px;
+                        f"""<div style="background:{bg};
+                        border:{borda}; padding:6px;
                         border-radius:8px; text-align:center;
                         font-size:12px; color:white; margin:2px;">
                         {label}<br><b>{d.strftime('%d/%m')}</b></div>""",
@@ -200,11 +230,10 @@ with aba1:
                     )
 
         st.divider()
-        # --- Legenda ---
         st.markdown(
-            "🔴 **Trabalho (12h)** &nbsp;&nbsp; "
-            "🟢 **Folga (36h)** &nbsp;&nbsp; "
-            "🏠 **Rotina em casa**"
+            "🔴 **Trabalho (12h)** &nbsp;&nbsp;&nbsp; "
+            "🟢 **Folga (36h)** &nbsp;&nbsp;&nbsp; "
+            "🔵 **Hoje** (borda azul)"
         )
 
 # ----------------------------------------------------------
@@ -248,7 +277,6 @@ with aba2:
     st.divider()
     st.subheader("Atividades Recentes")
 
-    # Filtro de período
     col_f1, col_f2 = st.columns(2)
     with col_f1:
         filtro_inicio = st.date_input(
@@ -257,7 +285,6 @@ with aba2:
     with col_f2:
         filtro_fim = st.date_input("Até", value=date.today())
 
-    # Carregamento protegido
     try:
         atividades = db.listar_atividades(filtro_inicio, filtro_fim)
         df = ana.atividades_para_dataframe(atividades)
@@ -269,20 +296,14 @@ with aba2:
 
     if erro_carregamento:
         st.error(f"❌ Erro ao carregar atividades: {erro_carregamento}")
-        st.info(
-            "Verifique se a tabela `atividades` existe no Supabase e "
-            "se o RLS está desabilitado ou possui policies válidas."
-        )
     elif df.empty:
         st.info("Nenhuma atividade no período selecionado.")
     else:
-        # Exibe tabela resumida
         df_exibir = df[["id", "data", "descricao", "categoria",
                         "duracao_min", "concluida"]].copy()
         df_exibir["data"] = df_exibir["data"].dt.strftime("%d/%m/%Y")
         st.dataframe(df_exibir, use_container_width=True, hide_index=True)
 
-        # Ações
         st.subheader("Gerenciar")
         col_del1, col_del2 = st.columns([1, 3])
         with col_del1:
@@ -299,7 +320,7 @@ with aba2:
                     st.error(f"❌ Erro ao excluir: {e}")
 
 # ----------------------------------------------------------
-#  ABA 3: Análise com Pandas
+#  ABA 3: Análise
 # ----------------------------------------------------------
 with aba3:
     st.subheader("📊 Análise Estatística")
@@ -307,7 +328,6 @@ with aba3:
     if df.empty:
         st.info("Sem dados para analisar. Registre atividades primeiro.")
     else:
-        # --- Métricas resumidas ---
         resumo = ana.resumo_estatistico(df)
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Atividades", resumo["total_atividades"])
@@ -318,7 +338,6 @@ with aba3:
 
         st.divider()
 
-        # --- Gráficos ---
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             st.plotly_chart(
@@ -341,7 +360,6 @@ with aba3:
             use_container_width=True,
         )
 
-        # --- Tabela detalhada com Pandas ---
         with st.expander("📋 Tabela detalhada (Pandas)"):
             st.dataframe(
                 df[["data", "descricao", "categoria",
@@ -384,7 +402,7 @@ with aba4:
         if not dia_folga:
             st.info(
                 "🔕 O alarme **não** dispara hoje porque não é dia de "
-                "folga. Ele só toca nos dias marcados como 🟢 na escala."
+                "folga. Ele só toca nos dias 🟢 da escala."
             )
         else:
             st.success(
@@ -421,9 +439,7 @@ with aba4:
                 f"**{st.session_state.horario_alarme}**"
             )
 
-        # ============================================================
-        #  🔍 DIAGNÓSTICO DO SISTEMA
-        # ============================================================
+        # ---------- Diagnóstico do Sistema ----------
         st.divider()
         st.subheader("🔍 Diagnóstico do Sistema")
 
@@ -448,8 +464,7 @@ with aba4:
             )
         else:
             st.success(
-                "✅ Todos os binários de áudio estão disponíveis. "
-                "O alarme funcionará corretamente."
+                "✅ Todos os binários de áudio estão disponíveis."
             )
 
 # ============================================================
