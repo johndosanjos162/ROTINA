@@ -2,6 +2,10 @@
 # ============================================================
 # Interface principal do aplicativo Streamlit.
 # Escala 12x36 (trabalho/folga alternados) + Alarme de Estudo
+#
+# - Banco: Supabase (nuvem)
+# - Alarme: toca NO NAVEGADOR do usuário (Web Audio + voz pt-BR)
+# - Todas as chamadas ao banco têm try/except para mensagens úteis
 # ============================================================
 
 import streamlit as st
@@ -11,7 +15,7 @@ import pandas as pd
 import supabase_client as db
 import escala as esc
 import analise as ana
-import alarme as alm
+import alarme_browser as ab
 
 # ============================================================
 #  Configuração da página
@@ -25,14 +29,12 @@ st.set_page_config(
 # ============================================================
 #  Estado da sessão
 # ============================================================
-if "monitor_iniciado" not in st.session_state:
-    st.session_state.monitor_iniciado = False
-if "monitor" not in st.session_state:
-    st.session_state.monitor = alm.MonitorAlarme()
 if "data_inicio_escala" not in st.session_state:
     st.session_state.data_inicio_escala = None
 if "horario_alarme" not in st.session_state:
     st.session_state.horario_alarme = "20:00"
+if "ativo_alarme" not in st.session_state:
+    st.session_state.ativo_alarme = True
 
 # ============================================================
 #  Carregamento inicial de configurações (com tratamento)
@@ -53,6 +55,7 @@ try:
     config_alarme = db.obter_config_alarme()
     if config_alarme:
         st.session_state.horario_alarme = config_alarme["horario"]
+        st.session_state.ativo_alarme = config_alarme.get("ativo", True)
 except Exception as e:
     st.warning(
         f"Não foi possível carregar a configuração do alarme. "
@@ -68,9 +71,8 @@ with st.sidebar:
     # ---------- Configuração da Escala ----------
     st.subheader("📅 Escala 12x36")
     st.caption(
-        "Informe a data em que você **começou um turno de trabalho** "
-        "(ex: hoje, se hoje é dia de trabalho). A escala vai alternar "
-        "automaticamente: trabalho → folga → trabalho → folga..."
+        "Informe a data em que você **começou um turno de trabalho**. "
+        "A escala vai alternar: trabalho → folga → trabalho → folga..."
     )
     data_inicio = st.date_input(
         "Data do primeiro dia de trabalho",
@@ -103,7 +105,7 @@ with st.sidebar:
 
     ativo_alarme = st.toggle(
         "Ativar alarme automático",
-        value=True,
+        value=st.session_state.ativo_alarme,
         help="Quando ligado, o alarme dispara sozinho nos dias "
              "de folga no horário definido.",
     )
@@ -112,6 +114,7 @@ with st.sidebar:
         try:
             db.salvar_config_alarme(horario_str, ativo=ativo_alarme)
             st.session_state.horario_alarme = horario_str
+            st.session_state.ativo_alarme = ativo_alarme
             st.success("Alarme configurado!")
             st.rerun()
         except Exception as e:
@@ -120,17 +123,6 @@ with st.sidebar:
     st.divider()
     st.caption("💡 O alarme toca som alto e fala "
                "'Tá na hora do estudo' apenas em dias de folga.")
-
-# ============================================================
-#  Iniciar monitor de alarme (uma vez por sessão)
-# ============================================================
-if (st.session_state.data_inicio_escala
-        and not st.session_state.monitor_iniciado):
-    st.session_state.monitor.iniciar(
-        st.session_state.data_inicio_escala,
-        st.session_state.horario_alarme,
-    )
-    st.session_state.monitor_iniciado = True
 
 # ============================================================
 #  Conteúdo principal
@@ -192,9 +184,9 @@ with aba1:
                 unsafe_allow_html=True,
             )
 
-        # Ajusta o primeiro dia da semana para alinhar com o dia da semana real
+        # Alinha o primeiro dia ao dia da semana real
         primeiro = dias[0]["data"]
-        offset = primeiro.weekday()  # 0=segunda, 6=domingo
+        offset = primeiro.weekday()  # 0 = segunda, 6 = domingo
 
         # Preenche células vazias antes do primeiro dia
         celulas = [None] * offset + dias[: 30 - offset]
@@ -211,7 +203,7 @@ with aba1:
                         continue
                     d = dia_info["data"]
                     t = dia_info["tipo"]
-                    # Destaca o dia de hoje com borda
+                    # Destaca o dia de hoje com borda azul
                     borda = (
                         "3px solid #1E88E5"
                         if d == hoje else "1px solid #ddd"
@@ -374,7 +366,7 @@ with aba3:
             )
 
 # ----------------------------------------------------------
-#  ABA 4: Alarme
+#  ABA 4: Alarme (toca NO NAVEGADOR do usuário)
 # ----------------------------------------------------------
 with aba4:
     st.subheader("⏰ Alarme de Estudo")
@@ -412,20 +404,36 @@ with aba4:
             )
 
         st.divider()
-        st.subheader("🔧 Teste Manual")
-        st.caption("Use este botão para testar o som e a voz do alarme.")
+        st.subheader("🔔 Alarme no seu navegador (tempo real)")
+        st.caption(
+            "Enquanto esta aba estiver aberta, o alarme tocará "
+            "diretamente no seu computador (Web Audio + voz do "
+            "navegador). **Mantenha a aba aberta no horário do alarme.**"
+        )
 
-        if st.button("🔔 Testar alarme agora"):
-            with st.spinner("Tocando alarme de teste..."):
-                try:
-                    alm.verificar_e_disparar_alarme(
-                        st.session_state.data_inicio_escala,
-                        st.session_state.horario_alarme,
-                        forcar=True,
-                    )
-                    st.success("Alarme de teste disparado! Verifique o áudio.")
-                except Exception as e:
-                    st.error(f"❌ Erro ao testar alarme: {e}")
+        # ⚠️ Importante: o navegador exige uma interação do usuário
+        # antes de permitir áudio automático. Clicar no botão de teste
+        # abaixo "desbloqueia" o áudio para o resto da sessão.
+        st.info(
+            "👉 **Dica:** ao abrir o app, clique uma vez em "
+            "**🔔 Testar alarme no navegador** para desbloquear o áudio. "
+            "Depois disso o alarme automático funcionará."
+        )
+
+        # Componente que roda no CLIENTE (navegador do usuário)
+        ab.render_alarme_browser(
+            data_inicio=st.session_state.data_inicio_escala,
+            horario=st.session_state.horario_alarme,
+            ativo=st.session_state.ativo_alarme,
+        )
+
+        st.divider()
+        st.subheader("🔧 Teste Manual no navegador")
+        st.caption(
+            "Clique no botão abaixo para tocar a sirene e a voz "
+            "imediatamente no seu computador."
+        )
+        ab.render_botao_teste_browser()
 
         st.divider()
         st.subheader("📅 Próximos alarmes agendados")
@@ -439,38 +447,10 @@ with aba4:
                 f"**{st.session_state.horario_alarme}**"
             )
 
-        # ---------- Diagnóstico do Sistema ----------
-        st.divider()
-        st.subheader("🔍 Diagnóstico do Sistema")
-
-        deps = alm.verificar_dependencias_sistema()
-        col_d1, col_d2 = st.columns(2)
-        with col_d1:
-            st.metric(
-                "espeak (voz)",
-                "✅ OK" if deps["espeak"] else "❌ ausente",
-                help=deps["espeak_path"],
-            )
-        with col_d2:
-            st.metric(
-                "ffplay (som)",
-                "✅ OK" if deps["ffplay"] else "❌ ausente",
-                help=deps["ffplay_path"],
-            )
-        if not (deps["espeak"] and deps["ffplay"]):
-            st.error(
-                "Binários ausentes. Verifique se `packages.txt` contém "
-                "`espeak`, `libespeak1` e `ffmpeg`, e faça reboot do app."
-            )
-        else:
-            st.success(
-                "✅ Todos os binários de áudio estão disponíveis."
-            )
-
 # ============================================================
 #  Footer
 # ============================================================
 st.divider()
 st.caption(
-    "Desenvolvido com Streamlit + Supabase + Pandas + ffmpeg + espeak."
+    "Desenvolvido com Streamlit + Supabase + Pandas + Web Audio API."
 )
