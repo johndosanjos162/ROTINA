@@ -2,6 +2,10 @@
 # ============================================================
 # Interface principal do aplicativo Streamlit.
 # Sistema de Escala 12x36 + Alarme de Estudo Inteligente
+#
+# Integração: Supabase (nuvem) + ffmpeg/espeak (áudio)
+# Todas as chamadas ao banco estão protegidas por try/except
+# para exibir mensagens de erro úteis em vez do erro genérico.
 # ============================================================
 
 import streamlit as st
@@ -35,17 +39,29 @@ if "horario_alarme" not in st.session_state:
     st.session_state.horario_alarme = "20:00"
 
 # ============================================================
-#  Carregamento inicial de configurações
+#  Carregamento inicial de configurações (com tratamento)
 # ============================================================
-config_escala = db.obter_config_escala()
-if config_escala:
-    st.session_state.data_inicio_escala = date.fromisoformat(
-        config_escala["data_inicio_trabalho"]
+try:
+    config_escala = db.obter_config_escala()
+    if config_escala:
+        st.session_state.data_inicio_escala = date.fromisoformat(
+            config_escala["data_inicio_trabalho"]
+        )
+except Exception as e:
+    st.warning(
+        f"Não foi possível carregar a configuração da escala. "
+        f"Detalhe: {e}"
     )
 
-config_alarme = db.obter_config_alarme()
-if config_alarme:
-    st.session_state.horario_alarme = config_alarme["horario"]
+try:
+    config_alarme = db.obter_config_alarme()
+    if config_alarme:
+        st.session_state.horario_alarme = config_alarme["horario"]
+except Exception as e:
+    st.warning(
+        f"Não foi possível carregar a configuração do alarme. "
+        f"Detalhe: {e}"
+    )
 
 # ============================================================
 #  Sidebar - Configurações
@@ -53,7 +69,7 @@ if config_alarme:
 with st.sidebar:
     st.title("⚙️ Configurações")
 
-    # --- Configuração da Escala ---
+    # ---------- Configuração da Escala ----------
     st.subheader("📅 Escala 12x36")
     data_inicio = st.date_input(
         "Data do primeiro dia de trabalho",
@@ -62,14 +78,22 @@ with st.sidebar:
              "A escala segue: trabalho → folga → rotina em casa.",
     )
     if st.button("💾 Salvar escala"):
-        db.salvar_config_escala(data_inicio)
-        st.session_state.data_inicio_escala = data_inicio
-        st.success("Escala salva!")
-        st.rerun()
+        try:
+            db.salvar_config_escala(data_inicio)
+            st.session_state.data_inicio_escala = data_inicio
+            st.success("Escala salva!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erro ao salvar escala: {e}")
+            st.info(
+                "Verifique se as tabelas foram criadas no Supabase "
+                "e se o RLS está desabilitado (ou se há policies "
+                "permitindo acesso). Veja o SQL no README."
+            )
 
     st.divider()
 
-    # --- Configuração do Alarme ---
+    # ---------- Configuração do Alarme ----------
     st.subheader("⏰ Alarme de Estudo")
     horario_input = st.time_input(
         "Horário do alarme (apenas em dias de folga)",
@@ -82,15 +106,18 @@ with st.sidebar:
     ativo_alarme = st.toggle(
         "Ativar alarme automático",
         value=True,
-        help="Quando ligado, o alarme dispara sozinho nos dias de folga "
-             "no horário definido.",
+        help="Quando ligado, o alarme dispara sozinho nos dias "
+             "de folga no horário definido.",
     )
 
     if st.button("💾 Salvar alarme"):
-        db.salvar_config_alarme(horario_str, ativo=ativo_alarme)
-        st.session_state.horario_alarme = horario_str
-        st.success("Alarme configurado!")
-        st.rerun()
+        try:
+            db.salvar_config_alarme(horario_str, ativo=ativo_alarme)
+            st.session_state.horario_alarme = horario_str
+            st.success("Alarme configurado!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erro ao salvar alarme: {e}")
 
     st.divider()
     st.caption("💡 O alarme toca som alto e fala "
@@ -165,8 +192,8 @@ with aba1:
                     else:
                         bg, label = "#FFA500", "🏠"
                     st.markdown(
-                        f"""<div style="background:{bg}; padding:6px; 
-                        border-radius:8px; text-align:center; 
+                        f"""<div style="background:{bg}; padding:6px;
+                        border-radius:8px; text-align:center;
                         font-size:12px; color:white; margin:2px;">
                         {label}<br><b>{d.strftime('%d/%m')}</b></div>""",
                         unsafe_allow_html=True,
@@ -207,11 +234,16 @@ with aba2:
             submitted = st.form_submit_button("➕ Adicionar")
 
         if submitted and descricao:
-            db.criar_atividade(
-                data_atv, descricao, categoria, duracao, concluida
-            )
-            st.success(f"Atividade '{descricao}' adicionada!")
-            st.rerun()
+            try:
+                db.criar_atividade(
+                    data_atv, descricao, categoria, duracao, concluida
+                )
+                st.success(f"Atividade '{descricao}' adicionada!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao adicionar atividade: {e}")
+        elif submitted and not descricao:
+            st.warning("Preencha a descrição antes de adicionar.")
 
     st.divider()
     st.subheader("Atividades Recentes")
@@ -225,13 +257,26 @@ with aba2:
     with col_f2:
         filtro_fim = st.date_input("Até", value=date.today())
 
-    atividades = db.listar_atividades(filtro_inicio, filtro_fim)
-    df = ana.atividades_para_dataframe(atividades)
+    # Carregamento protegido
+    try:
+        atividades = db.listar_atividades(filtro_inicio, filtro_fim)
+        df = ana.atividades_para_dataframe(atividades)
+        erro_carregamento = None
+    except Exception as e:
+        erro_carregamento = str(e)
+        atividades = []
+        df = ana.atividades_para_dataframe([])
 
-    if df.empty:
+    if erro_carregamento:
+        st.error(f"❌ Erro ao carregar atividades: {erro_carregamento}")
+        st.info(
+            "Verifique se a tabela `atividades` existe no Supabase e "
+            "se o RLS está desabilitado ou possui policies válidas."
+        )
+    elif df.empty:
         st.info("Nenhuma atividade no período selecionado.")
     else:
-        # Exibe tabela editável resumida
+        # Exibe tabela resumida
         df_exibir = df[["id", "data", "descricao", "categoria",
                         "duracao_min", "concluida"]].copy()
         df_exibir["data"] = df_exibir["data"].dt.strftime("%d/%m/%Y")
@@ -246,9 +291,12 @@ with aba2:
             )
         with col_del2:
             if st.button("🗑️ Excluir atividade"):
-                db.deletar_atividade(int(id_del))
-                st.success("Atividade excluída!")
-                st.rerun()
+                try:
+                    db.deletar_atividade(int(id_del))
+                    st.success("Atividade excluída!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao excluir: {e}")
 
 # ----------------------------------------------------------
 #  ABA 3: Análise com Pandas
@@ -335,8 +383,8 @@ with aba4:
 
         if not dia_folga:
             st.info(
-                "🔕 O alarme **não** dispara hoje porque não é dia de folga. "
-                "Ele só toca nos dias marcados como 🟢 na sua escala."
+                "🔕 O alarme **não** dispara hoje porque não é dia de "
+                "folga. Ele só toca nos dias marcados como 🟢 na escala."
             )
         else:
             st.success(
@@ -351,12 +399,15 @@ with aba4:
 
         if st.button("🔔 Testar alarme agora"):
             with st.spinner("Tocando alarme de teste..."):
-                alm.verificar_e_disparar_alarme(
-                    st.session_state.data_inicio_escala,
-                    st.session_state.horario_alarme,
-                    forcar=True,
-                )
-            st.success("Alarme de teste disparado! Verifique o áudio.")
+                try:
+                    alm.verificar_e_disparar_alarme(
+                        st.session_state.data_inicio_escala,
+                        st.session_state.horario_alarme,
+                        forcar=True,
+                    )
+                    st.success("Alarme de teste disparado! Verifique o áudio.")
+                except Exception as e:
+                    st.error(f"❌ Erro ao testar alarme: {e}")
 
         st.divider()
         st.subheader("📅 Próximos alarmes agendados")
@@ -371,7 +422,7 @@ with aba4:
             )
 
         # ============================================================
-        #  🔍 DIAGNÓSTICO DO SISTEMA (bloco novo adicionado)
+        #  🔍 DIAGNÓSTICO DO SISTEMA
         # ============================================================
         st.divider()
         st.subheader("🔍 Diagnóstico do Sistema")
@@ -406,6 +457,5 @@ with aba4:
 # ============================================================
 st.divider()
 st.caption(
-    "Desenvolvido com Streamlit + Supabase + Pandas + ffmpeg + espeak. "
-    "Pronto para migração para PostgreSQL local."
+    "Desenvolvido com Streamlit + Supabase + Pandas + ffmpeg + espeak."
 )
