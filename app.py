@@ -1,11 +1,7 @@
 # app.py
 # ============================================================
 # Interface principal do aplicativo Streamlit.
-# Escala 12x36 (trabalho/folga alternados) + Alarme de Estudo
-#
-# - Banco: Supabase (nuvem)
-# - Alarme: toca NO NAVEGADOR do usuário (Web Audio + voz pt-BR)
-# - Todas as chamadas ao banco têm try/except para mensagens úteis
+# Escala 12x36 + Alarme de Estudo com tempo configurável.
 # ============================================================
 
 import streamlit as st
@@ -29,15 +25,21 @@ st.set_page_config(
 # ============================================================
 #  Estado da sessão
 # ============================================================
-if "data_inicio_escala" not in st.session_state:
-    st.session_state.data_inicio_escala = None
-if "horario_alarme" not in st.session_state:
-    st.session_state.horario_alarme = "20:00"
-if "ativo_alarme" not in st.session_state:
-    st.session_state.ativo_alarme = True
+defaults = {
+    "data_inicio_escala": None,
+    "horario_alarme": "20:00",
+    "ativo_alarme": True,
+    "duracao_segundos": 8,
+    "volume": 80,
+    "repeticoes_voz": 2,
+    "velocidade_voz": 95,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ============================================================
-#  Carregamento inicial de configurações (com tratamento)
+#  Carregamento inicial de configurações
 # ============================================================
 try:
     config_escala = db.obter_config_escala()
@@ -46,21 +48,25 @@ try:
             config_escala["data_inicio_trabalho"]
         )
 except Exception as e:
-    st.warning(
-        f"Não foi possível carregar a configuração da escala. "
-        f"Detalhe: {e}"
-    )
+    st.warning(f"Não foi possível carregar a escala. Detalhe: {e}")
 
 try:
     config_alarme = db.obter_config_alarme()
     if config_alarme:
         st.session_state.horario_alarme = config_alarme["horario"]
         st.session_state.ativo_alarme = config_alarme.get("ativo", True)
+        st.session_state.duracao_segundos = config_alarme.get(
+            "duracao_segundos", 8
+        )
+        st.session_state.volume = config_alarme.get("volume", 80)
+        st.session_state.repeticoes_voz = config_alarme.get(
+            "repeticoes_voz", 2
+        )
+        st.session_state.velocidade_voz = config_alarme.get(
+            "velocidade_voz", 95
+        )
 except Exception as e:
-    st.warning(
-        f"Não foi possível carregar a configuração do alarme. "
-        f"Detalhe: {e}"
-    )
+    st.warning(f"Não foi possível carregar o alarme. Detalhe: {e}")
 
 # ============================================================
 #  Sidebar - Configurações
@@ -68,11 +74,11 @@ except Exception as e:
 with st.sidebar:
     st.title("⚙️ Configurações")
 
-    # ---------- Configuração da Escala ----------
+    # ---------- Escala ----------
     st.subheader("📅 Escala 12x36")
     st.caption(
         "Informe a data em que você **começou um turno de trabalho**. "
-        "A escala vai alternar: trabalho → folga → trabalho → folga..."
+        "A escala alterna: trabalho → folga → trabalho → folga..."
     )
     data_inicio = st.date_input(
         "Data do primeiro dia de trabalho",
@@ -86,14 +92,10 @@ with st.sidebar:
             st.rerun()
         except Exception as e:
             st.error(f"❌ Erro ao salvar escala: {e}")
-            st.info(
-                "Verifique se as tabelas foram criadas no Supabase "
-                "e se o RLS está desabilitado."
-            )
 
     st.divider()
 
-    # ---------- Configuração do Alarme ----------
+    # ---------- Alarme: horário e ativação ----------
     st.subheader("⏰ Alarme de Estudo")
     horario_input = st.time_input(
         "Horário do alarme (apenas em dias de folga)",
@@ -106,23 +108,68 @@ with st.sidebar:
     ativo_alarme = st.toggle(
         "Ativar alarme automático",
         value=st.session_state.ativo_alarme,
-        help="Quando ligado, o alarme dispara sozinho nos dias "
-             "de folga no horário definido.",
+    )
+
+    st.markdown("**⏱️ Tempo e intensidade**")
+
+    duracao_segundos = st.slider(
+        "Duração da sirene (segundos)",
+        min_value=3, max_value=60,
+        value=st.session_state.duracao_segundos,
+        step=1,
+        help="Quanto tempo a sirene bitonal toca antes da voz.",
+    )
+
+    volume = st.slider(
+        "Volume (%)",
+        min_value=0, max_value=100,
+        value=st.session_state.volume,
+        step=5,
+        help="Volume do som e da voz no seu navegador.",
+    )
+
+    repeticoes_voz = st.slider(
+        "Repetições da voz",
+        min_value=1, max_value=10,
+        value=st.session_state.repeticoes_voz,
+        step=1,
+        help="Quantas vezes falar 'Tá na hora do estudo'.",
+    )
+
+    velocidade_voz = st.slider(
+        "Velocidade da voz (%)",
+        min_value=50, max_value=200,
+        value=st.session_state.velocidade_voz,
+        step=5,
+        help="100 = normal. Menor = mais devagar (mais fácil de acordar).",
     )
 
     if st.button("💾 Salvar alarme"):
         try:
-            db.salvar_config_alarme(horario_str, ativo=ativo_alarme)
+            db.salvar_config_alarme(
+                horario=horario_str,
+                ativo=ativo_alarme,
+                duracao_segundos=duracao_segundos,
+                volume=volume,
+                repeticoes_voz=repeticoes_voz,
+                velocidade_voz=velocidade_voz,
+            )
             st.session_state.horario_alarme = horario_str
             st.session_state.ativo_alarme = ativo_alarme
+            st.session_state.duracao_segundos = duracao_segundos
+            st.session_state.volume = volume
+            st.session_state.repeticoes_voz = repeticoes_voz
+            st.session_state.velocidade_voz = velocidade_voz
             st.success("Alarme configurado!")
             st.rerun()
         except Exception as e:
             st.error(f"❌ Erro ao salvar alarme: {e}")
 
     st.divider()
-    st.caption("💡 O alarme toca som alto e fala "
-               "'Tá na hora do estudo' apenas em dias de folga.")
+    st.caption(
+        "💡 O alarme toca no **navegador** (Web Audio + voz pt-BR). "
+        "Mantenha a aba aberta no horário."
+    )
 
 # ============================================================
 #  Conteúdo principal
@@ -146,12 +193,9 @@ with aba1:
     else:
         data_ini = st.session_state.data_inicio_escala
         hoje = date.today()
-
-        # --- Status do dia ---
         tipo_hoje = esc.classificar_dia(hoje, data_ini)
 
         col1, col2, col3 = st.columns(3)
-
         icones = {
             "trabalho": "🔴 Trabalho (6h → 18h)",
             "folga": "🟢 Folga (36h de descanso)",
@@ -166,7 +210,6 @@ with aba1:
                     "Folga seguinte", proximas[1].strftime("%d/%m/%Y")
                 )
 
-        # --- Calendário visual (próximos 30 dias) ---
         st.subheader("Próximos 30 dias")
         st.caption(
             "🔴 Trabalho &nbsp;•&nbsp; 🟢 Folga "
@@ -174,7 +217,6 @@ with aba1:
         )
         dias = esc.gerar_dias_escala(data_ini, 30)
 
-        # Cabeçalho dos dias da semana
         dias_semana = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
         cols_header = st.columns(7)
         for i, nome in enumerate(dias_semana):
@@ -184,14 +226,9 @@ with aba1:
                 unsafe_allow_html=True,
             )
 
-        # Alinha o primeiro dia ao dia da semana real
         primeiro = dias[0]["data"]
-        offset = primeiro.weekday()  # 0 = segunda, 6 = domingo
-
-        # Preenche células vazias antes do primeiro dia
+        offset = primeiro.weekday()
         celulas = [None] * offset + dias[: 30 - offset]
-
-        # Divide em semanas de 7
         semanas = [celulas[i:i + 7] for i in range(0, len(celulas), 7)]
 
         for semana in semanas:
@@ -203,7 +240,6 @@ with aba1:
                         continue
                     d = dia_info["data"]
                     t = dia_info["tipo"]
-                    # Destaca o dia de hoje com borda azul
                     borda = (
                         "3px solid #1E88E5"
                         if d == hoje else "1px solid #ddd"
@@ -366,7 +402,7 @@ with aba3:
             )
 
 # ----------------------------------------------------------
-#  ABA 4: Alarme (toca NO NAVEGADOR do usuário)
+#  ABA 4: Alarme
 # ----------------------------------------------------------
 with aba4:
     st.subheader("⏰ Alarme de Estudo")
@@ -379,7 +415,7 @@ with aba4:
             hoje, st.session_state.data_inicio_escala
         )
 
-        col_s1, col_s2 = st.columns(2)
+        col_s1, col_s2, col_s3 = st.columns(3)
         with col_s1:
             st.metric(
                 "Hoje é dia de folga?",
@@ -390,6 +426,19 @@ with aba4:
                 "Horário configurado",
                 st.session_state.horario_alarme,
             )
+        with col_s3:
+            st.metric(
+                "Duração da sirene",
+                f"{st.session_state.duracao_segundos}s",
+            )
+
+        # Resumo da configuração de tempo
+        st.markdown(
+            f"**Configuração atual do alarme:** "
+            f"🔊 Volume {st.session_state.volume}% &nbsp;|&nbsp; "
+            f"🗣️ Voz {st.session_state.repeticoes_voz}x @ "
+            f"{st.session_state.velocidade_voz}% de velocidade"
+        )
 
         if not dia_folga:
             st.info(
@@ -400,40 +449,46 @@ with aba4:
             st.success(
                 "🟢 Hoje é dia de folga! O alarme vai disparar "
                 f"às **{st.session_state.horario_alarme}** "
-                "e falar: *'Tá na hora do estudo'*."
+                f"com **{st.session_state.duracao_segundos}s** de sirene "
+                f"e a voz falará **{st.session_state.repeticoes_voz}x**."
             )
 
         st.divider()
-        st.subheader("🔔 Alarme no seu navegador (tempo real)")
+        st.subheader("🔔 Alarme no seu navegador")
         st.caption(
             "Enquanto esta aba estiver aberta, o alarme tocará "
-            "diretamente no seu computador (Web Audio + voz do "
-            "navegador). **Mantenha a aba aberta no horário do alarme.**"
+            "diretamente no seu computador. **Mantenha a aba aberta "
+            "no horário do alarme.**"
         )
 
-        # ⚠️ Importante: o navegador exige uma interação do usuário
-        # antes de permitir áudio automático. Clicar no botão de teste
-        # abaixo "desbloqueia" o áudio para o resto da sessão.
         st.info(
             "👉 **Dica:** ao abrir o app, clique uma vez em "
-            "**🔔 Testar alarme no navegador** para desbloquear o áudio. "
-            "Depois disso o alarme automático funcionará."
+            "**🔔 Testar alarme no navegador** para desbloquear o áudio."
         )
 
-        # Componente que roda no CLIENTE (navegador do usuário)
+        # Componente do alarme (roda no cliente)
         ab.render_alarme_browser(
             data_inicio=st.session_state.data_inicio_escala,
             horario=st.session_state.horario_alarme,
             ativo=st.session_state.ativo_alarme,
+            duracao_segundos=st.session_state.duracao_segundos,
+            volume=st.session_state.volume,
+            repeticoes_voz=st.session_state.repeticoes_voz,
+            velocidade_voz=st.session_state.velocidade_voz,
         )
 
         st.divider()
         st.subheader("🔧 Teste Manual no navegador")
         st.caption(
-            "Clique no botão abaixo para tocar a sirene e a voz "
-            "imediatamente no seu computador."
+            "O botão abaixo usa as configurações atuais "
+            "(duração, volume, repetições e velocidade)."
         )
-        ab.render_botao_teste_browser()
+        ab.render_botao_teste_browser(
+            duracao_segundos=st.session_state.duracao_segundos,
+            volume=st.session_state.volume,
+            repeticoes_voz=st.session_state.repeticoes_voz,
+            velocidade_voz=st.session_state.velocidade_voz,
+        )
 
         st.divider()
         st.subheader("📅 Próximos alarmes agendados")
@@ -444,7 +499,8 @@ with aba4:
             st.markdown(
                 f"- **{f.strftime('%d/%m/%Y')}** "
                 f"({f.strftime('%A')}) às "
-                f"**{st.session_state.horario_alarme}**"
+                f"**{st.session_state.horario_alarme}** — "
+                f"{st.session_state.duracao_segundos}s de sirene"
             )
 
 # ============================================================
